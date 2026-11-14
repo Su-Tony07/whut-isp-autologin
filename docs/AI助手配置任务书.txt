@@ -129,7 +129,7 @@ NCSI_BODY = "Microsoft Connect Test"
 TIMEOUT = 6
 VERIFY_WINDOW = 45   # 联网验证轮询窗口（秒）
 VERIFY_STEP = 4      # 轮询间隔（秒）
-PORTAL_WAIT = 90     # 等网关就绪的最长时间（秒）
+PORTAL_WAIT = 240    # 等网关就绪的最长时间（秒）——实测唤醒后 WiFi 重连可能要几分钟
 
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
@@ -502,7 +502,7 @@ if ($Report) {
     <StartWhenAvailable>true</StartWhenAvailable>
     <WakeToRun>true</WakeToRun>
     <Enabled>true</Enabled>
-    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
   </Settings>
   <Actions Context="Author">
     <Exec><Command>$pyw</Command><Arguments>"$escRpt"</Arguments></Exec>
@@ -532,11 +532,16 @@ Write-Host "DONE. battStart/battStop must both be False."
 推送内容只含结论与门户响应摘要（不含账号密码/姓名/MAC/token）。
 ---- BEGIN CODE E ----
 # -*- coding: utf-8 -*-
-"""WHUT-ISP 每日早报：分析自动登录日志，经 Server酱 推送微信通知。
+"""WHUT-ISP 每日早报 v2：分析自动登录日志，经 Server酱 推送微信通知。
 
-流程：07:05 由计划任务 WHUT-NetReport-Morning 触发（比 07:00 的登录任务晚 5 分钟），
-读取 whut_autologin.log 中今天 [唤醒时刻-5分钟, +30分钟] 窗口内的记录，判定
-登录结果，调用 Server酱 API 推送到微信。
+流程：由计划任务 WHUT-NetReport-Morning 在唤醒时刻+5分钟触发，读取
+whut_autologin.log 中今天 [唤醒时刻-5分钟, +60分钟] 窗口内的记录。
+
+v2 改进（11-15 实测早报误报后）：
+1. 等待判决：若窗口内尚无"联网验证"结论行，每 20 秒重读日志，
+   最多等到唤醒时刻+30分钟（登录可能还在等 WiFi 重连），再下结论
+2. 窗口放宽到 +60 分钟（实测登录成功发生在唤醒后 ~12 分钟）
+3. 推送前等 DNS 就绪（实测唤醒初期 DNS 未就绪导致推送失败），失败重试一次
 
 判定优先级（窗口内）：
   1. 有"联网验证：成功"        → 成功（掉线后自动登录成功）
@@ -548,7 +553,9 @@ SendKey 未配置时仅写日志不推送。
 """
 import json
 import re
+import socket
 import sys
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
@@ -558,6 +565,8 @@ RUN_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = RUN_DIR / "config.json"
 LOG_PATH = RUN_DIR / "whut_autologin.log"
 
+PUSH_HOST = "sctapi.ftqq.com"
+
 
 def log(msg):
     line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [早报] {msg}"
@@ -565,14 +574,7 @@ def log(msg):
         f.write(line + "\n")
 
 
-def load_window():
-    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    wake = str(cfg.get("wake_time", "07:00"))
-    key = str(cfg.get("serverchan_sendkey", "")).strip()
-    hh, mm = (wake.split(":") + ["0"])[:2]
-    w = datetime.now().replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
-    win_start = w - timedelta(minutes=5)
-    win_end = w + timedelta(minutes=30)
+def read_window_lines(win_start, win_end):
     lines = []
     if LOG_PATH.exists():
         for ln in LOG_PATH.read_text(encoding="utf-8").splitlines():
@@ -583,54 +585,97 @@ def load_window():
                 t = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 continue
-            if t.date() == w.date() and win_start <= t <= win_end:
+            if win_start <= t <= win_end:
                 lines.append(ln)
-    return key, wake, lines
+    return lines
 
 
-def judge(lines, wake):
-    """返回 (title, detail)。"""
-    ok_verify = [ln for ln in lines if "联网验证：成功" in ln]
-    ok_online = [ln for ln in lines if "已在线，无需登录" in ln]
-    fail = [ln for ln in lines if ("仍未在线" in ln or "认证未通过" in ln or "登录请求异常" in ln)]
-    portal = [ln for ln in lines if "门户响应" in ln]
-    date = f"{datetime.now():%m-%d}"
-    if ok_verify:
-        return "✅ 校园网自动登录成功", f"{date} 唤醒后掉线，已自动登录恢复。\n" + ok_verify[-1].split("] ", 1)[-1]
-    if ok_online:
-        return "✅ 校园网账号在线", f"{date} 早上账号保持在线，无需登录（未掉线）。"
-    if fail:
-        detail = fail[-1].split("] ", 1)[-1]
-        if portal:
-            detail += "\n" + portal[-1].split("] ", 1)[-1][:150]
-        return "❌ 校园网自动登录失败", f"{date} 自动登录未能恢复联网。\n{detail}\n（兜底任务每10分钟会继续重试；若持续失败请手动登录并检查 config.json 密码）"
-    if lines:
-        return "⚠️ 校园网状态待确认", f"{date} 唤醒窗口内有日志但无明确结论，兜底任务会继续处理。"
-    return "⚠️ 未检测到登录记录", f"{date} {wake} 前后无任何日志——电脑可能没被唤醒或任务未触发。兜底任务每10分钟会尝试登录。"
+def wait_for_net(timeout=60):
+    """等 DNS 能解析推送服务（唤醒初期 DNS 可能未就绪）。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            socket.getaddrinfo(PUSH_HOST, 443)
+            return True
+        except Exception:
+            time.sleep(6)
+    return False
 
 
 def push(key, title, detail):
-    url = f"https://sctapi.ftqq.com/{key}.send"
+    url = f"https://{PUSH_HOST}/{key}.send"
     data = urllib.parse.urlencode({"title": title, "desp": detail}).encode()
     req = urllib.request.Request(url, data=data, method="POST")
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=15) as resp:
         body = json.loads(resp.read().decode("utf-8"))
     return body.get("code") == 0
 
 
 def main():
-    key, wake, lines = load_window()
-    title, detail = judge(lines, wake)
+    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    key = str(cfg.get("serverchan_sendkey", "")).strip()
+    wake = str(cfg.get("wake_time", "07:00"))
+    hh, mm = (wake.split(":") + ["0"])[:2]
+    w = datetime.now().replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+    win_start = w - timedelta(minutes=5)
+    win_end = w + timedelta(minutes=60)
+    verdict_deadline = w + timedelta(minutes=30)
+
+    lines = read_window_lines(win_start, win_end)
+    # 等待判决：登录可能还在等网络，直到出现"联网验证"结论行或超过 +30 分钟
+    if datetime.now() < verdict_deadline and not any("联网验证" in ln for ln in lines):
+        log("窗口内暂无登录结论，等待登录任务出结果…")
+        while datetime.now() < verdict_deadline:
+            time.sleep(20)
+            lines = read_window_lines(win_start, win_end)
+            if any("联网验证" in ln for ln in lines):
+                break
+
+    ok_verify = [ln for ln in lines if "联网验证：成功" in ln]
+    ok_online = [ln for ln in lines if "已在线，无需登录" in ln]
+    fail = [ln for ln in lines if ("仍未在线" in ln or "认证未通过" in ln or "登录请求异常" in ln)]
+    portal = [ln for ln in lines if "门户响应" in ln]
+    date = f"{datetime.now():%m-%d}"
+
+    if ok_verify:
+        title = "✅ 校园网自动登录成功"
+        detail = f"{date} 唤醒后掉线，已自动登录恢复。\n" + ok_verify[-1].split("] ", 1)[-1]
+    elif ok_online:
+        title = "✅ 校园网账号在线"
+        detail = f"{date} 早上账号保持在线，无需登录（未掉线）。"
+    elif fail:
+        detail = fail[-1].split("] ", 1)[-1]
+        if portal:
+            detail += "\n" + portal[-1].split("] ", 1)[-1][:150]
+        title = "❌ 校园网自动登录失败"
+        detail = f"{date} 自动登录未能恢复联网。\n{detail}\n（兜底任务每10分钟会继续重试；若持续失败请手动登录并检查 config.json 密码）"
+    elif lines:
+        title = "⚠️ 校园网状态待确认"
+        detail = f"{date} 唤醒窗口内有日志但无明确结论，兜底任务会继续处理。"
+    else:
+        title = "⚠️ 未检测到登录记录"
+        detail = f"{date} {wake} 前后无任何日志——电脑可能没被唤醒或任务未触发。兜底任务每10分钟会尝试登录。"
+
     log(f"判定：{title}（窗口内 {len(lines)} 条日志）")
+
     if not key:
         log("SendKey 未配置，跳过推送。请在 config.json 的 serverchan_sendkey 填入 Server酱 SendKey")
         return 0
+
+    if not wait_for_net():
+        log("DNS 60 秒未就绪，仍尝试推送一次")
     try:
         ok = push(key, title, detail)
-        log("Server酱推送：" + ("成功 ✅" if ok else f"失败：响应异常"))
+        log("Server酱推送：" + ("成功 ✅" if ok else "失败：响应异常"))
     except Exception as e:
-        ok = False
-        log(f"Server酱推送异常：{e}")
+        log(f"推送第一次失败：{e}，30 秒后重试一次")
+        time.sleep(30)
+        try:
+            ok = push(key, title, detail)
+            log("重试推送：" + ("成功 ✅" if ok else "失败：响应异常"))
+        except Exception as e2:
+            log(f"重试推送仍失败：{e2}")
+            ok = False
     return 0 if ok else 2
 
 
@@ -671,6 +716,16 @@ if __name__ == "__main__":
 12. 微信早报推送内容只允许结论行和门户响应摘要（code/认证/拨号/
     msg 字段），绝不能包含门户原始 JSON（里面有用户姓名/MAC/token）、
     账号密码。Server酱免费版每天限 5 条，本工具每天只推 1 条。
+13. 定时唤醒失败排查顺序：①powercfg /q SCHEME_CURRENT SUB_SLEEP
+    RTCWAKE 看"当前直流电源设置索引"——默认 0x0（电池下禁用唤醒
+    计时器），必须 powercfg /setdcvalueindex SCHEME_CURRENT
+    SUB_SLEEP RTCWAKE 1（交流同理），这是 WakeToRun 夜间不生效
+    的最常见原因；②Modern Standby（S0ix）上 WakeToRun 不保证有效，
+    且笔记本过夜通常自动转入休眠（S4），从 S4 唤醒依赖 RTC 计时器，
+    开启①后多数机器可用；③仍不行就走 BIOS"AC Power Recovery/
+    来电自启 = Power On"兜底。早报任务推送前必须等 DNS 就绪
+    （唤醒初期 DNS 未就绪会 getaddrinfo failed），报告任务
+    ExecutionTimeLimit 要给足（等待判决可能持续 30 分钟）。
 
 ----------------------------------------------------------------
 八、验证清单（AI 完成部署后逐项自查）

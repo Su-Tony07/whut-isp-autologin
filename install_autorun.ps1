@@ -128,7 +128,7 @@ if ($Report) {
     <StartWhenAvailable>true</StartWhenAvailable>
     <WakeToRun>true</WakeToRun>
     <Enabled>true</Enabled>
-    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
   </Settings>
   <Actions Context="Author">
     <Exec><Command>$pyw</Command><Arguments>"$escRpt"</Arguments></Exec>

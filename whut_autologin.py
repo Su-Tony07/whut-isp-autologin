@@ -35,7 +35,7 @@ NCSI_BODY = "Microsoft Connect Test"
 TIMEOUT = 6
 VERIFY_WINDOW = 45   # 联网验证轮询窗口（秒）
 VERIFY_STEP = 4      # 轮询间隔（秒）
-PORTAL_WAIT = 90     # 等网关就绪的最长时间（秒）
+PORTAL_WAIT = 240    # 等网关就绪的最长时间（秒）——实测唤醒后 WiFi 重连可能要几分钟
 
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
