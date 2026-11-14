@@ -1,0 +1,715 @@
+================================================================
+ 武汉理工大学（WHUT）运营商网 WHUT-ISP 校园网自动登录
+ 配置任务书 —— 本文件直接发给电脑上的 AI 助手（ZCode / DSH 等）执行
+================================================================
+
+【给同学的话】
+把这份 txt 原样发给电脑上的 AI 助手，说一句"按这份文档帮我配置"即可。
+全程约 10 分钟。你的账号密码只需要你自己填进一个本地文件，
+不要把密码粘贴到和 AI 的对话里，也不要发到群里。
+可选功能：每天早上让微信自动推送"昨天夜里自动登录成没成功"（需要
+用微信注册一次 Server酱，免费，见步骤 5 的 -Report 选项）。
+
+【给 AI 助手的话】
+你是一台 Windows 10/11 电脑上的 AI 编码助手。请严格按本文档的步骤、
+代码和坑清单执行，不要改动认证协议和脚本逻辑。本脚本于 2026-11-14
+在武汉理工大学同一网络环境实测通过，协议与已审计的开源项目
+zhxycn/WHUT-WLAN 一致（凭据只发往校园网关 172.30.21.100，无任何
+第三方上报）。执行中如遇与文档不符的报错，先对照"七、关键坑清单"，
+仍无法解决就如实向用户说明，不要硬编。
+
+----------------------------------------------------------------
+一、用途与适用性检查
+----------------------------------------------------------------
+用途：电脑连上 WHUT 运营商网（WHUT-ISP）后自动完成 Portal 认证 +
+PPPoE 拨号，掉线自动重连；可选开机自启、定时唤醒、微信早报。
+解决的痛点：宿舍 23 点断电，次日账号掉线要手动登录。
+
+部署前让用户确认以下三点，任何一条不满足就停止并解释：
+1. 登录页面 URL 形如 http://172.30.21.100/tpl/isp/login_account.html?...
+   （让用户连校园网后看浏览器地址栏。如果你们门户是 172.30.16.34 的
+   深澜/srun 认证页，本工具不适用，停止。）
+2. Windows 10/11，且装有 Python 3.8+（没有就先引导安装 Python，
+   勾选 Add to PATH）。
+3. 登录用户名 = 校园卡卡号后六位的绝对值；密码 = 智慧校园密码
+   （默认 Whut@ + 证件号后6位，X 要大写；改过就用改过的）。
+
+----------------------------------------------------------------
+二、部署步骤
+----------------------------------------------------------------
+步骤 1：环境检查
+  运行 python --version 和 python -c "import requests"。
+  缺 requests 则执行 pip install requests。
+
+步骤 2：创建目录 C:\Users\<用户名>\Desktop\whut-autologin-runner
+  （或用户指定的其它目录，下文称 <运行目录>）。
+  将【代码块A】原样写入 <运行目录>\whut_autologin.py，一字不改。
+
+步骤 3：将【代码块B】写入 <运行目录>\config.json。
+  然后明确请用户本人用记事本填 username 和 password 两个字段。
+  再次提醒用户不要把密码发到对话里。
+  用户填好后，AI 只校验两个字段"非空"（例如读 JSON 检查键值是否为
+  空字符串并打印 True/False），绝不读取、打印、转述密码内容。
+
+步骤 4：实测登录
+  前提：电脑已连校园网 WiFi 且未在浏览器登录门户（掉线状态）。
+  如果用户当前在手机热点或已在线，跳过实测，告知下次掉线自动生效。
+  运行：python "<运行目录>\whut_autologin.py"
+  预期日志：
+    检测到掉线，开始登录（用户名 xxx，nasId 兜底 528）
+    门户响应：code=0 认证[...] 拨号[...] msg=认证成功
+    联网验证：成功 ✅（第 N 次探测）
+  注意：拨号[] 为空但 45 秒内联网复核成功 = 正常现象
+  （PPPoE 数据面建立需要 10~20 秒，脚本会耐心轮询）。
+  门户弹出验证码（code 不为 0 且提示验证码）时脚本无法处理，
+  需用户手动登录一次，之后继续自动化。
+
+步骤 5：注册自启。将【代码块C】写入 <运行目录>\install_autorun.ps1，
+  然后用 powershell -NoProfile -ExecutionPolicy Bypass -File 执行。
+  基础安装（不带参数执行）包含三件：
+    - HKCU Run 开机自启键 WHUT-AutoLogin
+    - 计划任务 WHUT-AutoLogin-Watch（每 10 分钟兜底重连）
+    - 计划任务 WHUT-AutoLogin-Wake（睡眠唤醒时立即登录）
+  可选追加（先问用户要不要，逐项说明）：
+  a) -Morning："电脑放宿舍、上课用 pad 远程"场景 → 每天早上定时唤醒
+     电脑 + 登录 + 保持唤醒 N 小时（唤醒时刻/保持时长 = config.json
+     的 wake_time/hold_hours，可改，改完重跑安装器）。
+     普通用户不要装（会每天早上把电脑叫醒）。
+  b) -Report：微信早报 → 每天早上（唤醒时刻+5分钟）分析日志并通过
+     Server酱 给微信推一条"登录成功/失败"。需要用户先用微信注册
+     https://sct.ftqq.com 拿到 SendKey（SCT 开头），由用户本人填入
+     config.json 的 serverchan_sendkey 字段（不要发到对话里），
+     AI 只校验非空。SendKey 留空 = 不启用，脚本会静默跳过推送。
+  两个都装：powershell ... -File install_autorun.ps1 -Morning -Report
+
+步骤 6：收尾自查（对照"八、验证清单"逐项确认），然后向用户汇报：
+  - 怎么看日志（whut_autologin.log）
+  - 改了校园网密码要同步改 config.json
+  - 出现验证码时手动登一次
+  - 卸载方法（【代码块D】双击）
+
+----------------------------------------------------------------
+三、【代码块A】whut_autologin.py（完整代码，一字不改）
+----------------------------------------------------------------
+---- BEGIN CODE A ----
+# -*- coding: utf-8 -*-
+"""WHUT-ISP 校园网自动登录器（运行器 v4）
+
+认证协议来自审计过的 zhxycn/WHUT-WLAN（main.py），加固点：
+1. 所有请求带超时（上游无超时，计划任务挂死风险）
+2. POST body 用 urlencode 编码（上游原样拼接，密码含 &/+ 会坏）
+3. 联网验证改为 45 秒轮询（实测 PPPoE 拨号后数据面要 10~20 秒才真正通）
+4. 认证通过但始终不在线时：登出清理残留会话后重登一次（拨号冲突兜底）
+5. 登录前先等网关就绪（睡眠唤醒后 WiFi 重连要几秒~几十秒，防止任务扑空）
+6. 不在校园网（如连手机热点）时静默跳过，不报错
+7. --hold N：登录后阻止系统自动睡眠 N 小时（早上唤醒任务用，pad 远程场景）
+
+凭据从本目录 config.json 读取，不经过命令行参数（进程列表不可见）。
+日志只记用户名和门户响应，永不记录密码。
+"""
+import argparse
+import ctypes
+import json
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlencode, urlparse, parse_qs
+
+import requests
+
+RUN_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = RUN_DIR / "config.json"
+LOG_PATH = RUN_DIR / "whut_autologin.log"
+
+PORTAL = "http://172.30.21.100"
+NCSI_PROBE = "http://www.msftconnecttest.com/connecttest.txt"
+NCSI_REDIRECT = "http://www.msftconnecttest.com/redirect"
+NCSI_BODY = "Microsoft Connect Test"
+TIMEOUT = 6
+VERIFY_WINDOW = 45   # 联网验证轮询窗口（秒）
+VERIFY_STEP = 4      # 轮询间隔（秒）
+PORTAL_WAIT = 90     # 等网关就绪的最长时间（秒）
+
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+
+
+def log(msg):
+    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
+    print(line)
+    try:
+        # 轮转：超 2MB 归档为 .log.old（每 10 分钟一条打卡，约半年涨满 2MB）
+        if LOG_PATH.exists() and LOG_PATH.stat().st_size > 2 * 1024 * 1024:
+            old = LOG_PATH.with_suffix(".log.old")
+            if old.exists():
+                old.unlink()
+            LOG_PATH.rename(old)
+    except Exception:
+        pass
+    with open(LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def is_online():
+    """NCSI 探测：被门户劫持时响应内容会变，以此区分在线/掉线。"""
+    try:
+        r = requests.get(NCSI_PROBE, timeout=TIMEOUT)
+        return r.status_code == 200 and NCSI_BODY in r.text
+    except Exception:
+        return False
+
+
+def verify_online(window=VERIFY_WINDOW):
+    """耐心轮询验证：拨号成功 ≠ 数据面立刻通，实测要十几秒。"""
+    deadline = time.time() + window
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        if is_online():
+            log(f"联网验证：成功 ✅（第 {attempt} 次探测）")
+            return True
+        time.sleep(VERIFY_STEP)
+    log(f"联网验证：{window} 秒内仍未在线 ❌")
+    return False
+
+
+def wait_for_portal(max_wait=PORTAL_WAIT):
+    """等校园网网关就绪（唤醒后 WiFi 重连中，网关暂时不可达是正常的）。"""
+    deadline = time.time() + max_wait
+    waited = 0
+    while time.time() < deadline:
+        try:
+            r = requests.get(f"{PORTAL}/api/csrf-token", timeout=TIMEOUT)
+            if r.status_code == 200:
+                if waited:
+                    log(f"网关就绪（等待 {waited} 秒）")
+                return True
+        except Exception:
+            pass
+        time.sleep(4)
+        waited += 4
+    return False
+
+
+def get_nasid(session, fallback):
+    """复用上游逻辑：借 NCSI 重定向从门户劫持 URL 里解析 nasId。"""
+    try:
+        r = session.get(NCSI_REDIRECT, timeout=TIMEOUT, allow_redirects=True)
+        qs = parse_qs(urlparse(r.url).query)
+        if qs.get("nasId"):
+            return qs["nasId"][0]
+    except Exception as e:
+        log(f"nasId 解析失败（{e}），使用兜底值")
+    return fallback
+
+
+def get_csrf(session):
+    return session.get(f"{PORTAL}/api/csrf-token", timeout=TIMEOUT).json()["csrf_token"]
+
+
+def portal_login(session, csrf, username, password, nasid):
+    data = urlencode({
+        "username": username,
+        "password": password,
+        "switchip": "",
+        "nasId": nasid,
+        "userIpv4": "",
+        "userMac": "",
+        "captcha": "",
+        "captchaId": "",
+    })
+    resp = session.post(
+        f"{PORTAL}/api/account/login",
+        headers={
+            "content-type": "application/x-www-form-urlencoded",
+            "x-csrf-token": csrf,
+        },
+        data=data,
+        timeout=TIMEOUT,
+    )
+    return resp.text
+
+
+def portal_logout(session, csrf):
+    """尽力而为地清理本机残留会话（只影响当前 IP/MAC 的会话）。"""
+    try:
+        session.get(
+            f"{PORTAL}/api/account/logout",
+            headers={"x-csrf-token": csrf},
+            timeout=TIMEOUT,
+        )
+        log("已发送登出，清理残留会话")
+    except Exception as e:
+        log(f"登出请求失败（忽略）：{e}")
+
+
+def parse_portal_response(text):
+    """提取门户响应里的关键字段，方便日志判断。"""
+    try:
+        j = json.loads(text)
+        code = j.get("code")
+        auth = f'{j.get("authCode", "")} {j.get("authMsg", "")}'.strip()
+        dial = f'{j.get("dialCode", "")} {j.get("dialMsg", "")}'.strip()
+        msg = j.get("msg", "")
+        return code, auth, dial, msg
+    except Exception:
+        return None, "", "", text[:200]
+
+
+def attempt(username, password, nasid_fallback):
+    """完整登录一次。返回 (门户响应原文, code, session, csrf)。"""
+    session = requests.Session()
+    nasid = get_nasid(session, nasid_fallback)
+    csrf = get_csrf(session)
+    text = portal_login(session, csrf, username, password, nasid)
+    code, auth, dial, msg = parse_portal_response(text)
+    log(f"门户响应：code={code} 认证[{auth}] 拨号[{dial}] msg={msg}")
+    return text, code, session, csrf
+
+
+def hold_awake(hours):
+    """阻止系统自动睡眠（不阻止手动睡眠），hold_hours 小时后自动恢复。"""
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+    log(f"进入保持唤醒状态 {hours} 小时（手动睡眠不受影响，期间 pad 随时可远程）")
+    end = time.time() + hours * 3600
+    while time.time() < end:
+        time.sleep(60)
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+    log("保持唤醒结束，恢复系统自动睡眠策略")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="WHUT-ISP autologin")
+    ap.add_argument("--hold", type=float, default=0.0,
+                    help="登录后保持系统唤醒的小时数（早上唤醒任务用）")
+    args = ap.parse_args()
+    try:
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        log("config.json 不存在")
+        return 3
+    username = cfg.get("username", "").strip()
+    password = cfg.get("password", "")
+    nasid_fallback = str(cfg.get("nasid_fallback", "")).strip()
+    if not username or not password:
+        log("config.json 里 username/password 还没填")
+        return 3
+
+    if is_online():
+        log("已在线，无需登录")
+        if args.hold > 0:
+            hold_awake(args.hold)
+        return 0
+
+    log(f"检测到掉线，开始登录（用户名 {username}，nasId 兜底 {nasid_fallback or '无'}）")
+    if not wait_for_portal():
+        log("网关 90 秒不可达：大概率不在校园网（如热点），本轮跳过")
+        if args.hold > 0:
+            hold_awake(args.hold)
+        return 0
+
+    try:
+        text, code, session, csrf = attempt(username, password, nasid_fallback)
+    except Exception as e:
+        log(f"登录请求异常：{e}")
+        return 2
+
+    result_ok = False
+    if code == 0:
+        result_ok = verify_online()
+        if not result_ok:
+            # 认证通过但迟迟不在线：多半是残留 PPPoE 会话卡住拨号，登出清理后重来
+            log("认证通过但未联网，执行登出清理后重试一次")
+            portal_logout(session, csrf)
+            time.sleep(3)
+            try:
+                text, code, session, csrf = attempt(username, password, nasid_fallback)
+            except Exception as e:
+                log(f"重试登录请求异常：{e}")
+                code = None
+            if code == 0:
+                result_ok = verify_online()
+    else:
+        log(f"认证未通过（code={code}），不重试。若门户要求验证码或密码已改，请手动处理")
+
+    if not result_ok:
+        log("本轮自动登录未能恢复联网")
+
+    if args.hold > 0:
+        hold_awake(args.hold)
+
+    return 0 if result_ok else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+---- END CODE A ----
+
+----------------------------------------------------------------
+四、【代码块B】config.json 模板
+----------------------------------------------------------------
+（写入后请用户本人填 username/password；若开通微信早报，SendKey 也由
+用户本人填入 serverchan_sendkey，AI 不要代填、不要读取任何值）
+---- BEGIN CODE B ----
+{
+  "username": "",
+  "password": "",
+  "nasid_fallback": "528",
+  "wake_time": "07:00",
+  "hold_hours": 12,
+  "serverchan_sendkey": ""
+}
+---- END CODE B ----
+
+----------------------------------------------------------------
+五、【代码块C】install_autorun.ps1（完整代码）
+----------------------------------------------------------------
+写入 <运行目录>\install_autorun.ps1。注意：此文件必须保存为纯 ASCII，
+一个中文都不能有（PowerShell 5.1 会把无 BOM 的 UTF-8 当 GBK 解析）。
+基础安装：powershell -NoProfile -ExecutionPolicy Bypass -File install_autorun.ps1
+加早上唤醒：powershell -NoProfile -ExecutionPolicy Bypass -File install_autorun.ps1 -Morning
+加微信早报：powershell -NoProfile -ExecutionPolicy Bypass -File install_autorun.ps1 -Report
+两个都加：  powershell -NoProfile -ExecutionPolicy Bypass -File install_autorun.ps1 -Morning -Report
+---- BEGIN CODE C ----
+# WHUT-ISP autologin installer (current user, no admin needed)
+# Base: HKCU Run + 10-min watch task + wake-from-sleep task
+# -Morning: daily wake task (for laptop-in-dorm + pad-remote users)
+# -Report:  daily morning report task (push result to WeChat via ServerChan)
+param([switch]$Morning, [switch]$Report)
+
+$runDir = $PSScriptRoot
+$py     = (Get-Command python.exe).Source
+$pyw    = Join-Path (Split-Path $py) 'pythonw.exe'
+$script = Join-Path $runDir 'whut_autologin.py'
+$userid = $env:COMPUTERNAME + '\' + $env:USERNAME
+
+# ---- 1) logon autostart ----
+$val = '"' + $pyw + '" "' + $script + '"'
+Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'WHUT-AutoLogin' -Value $val
+Write-Host "[OK] logon autostart registered"
+
+# ---- 2) 10-min keepalive ----
+$action  = New-ScheduledTaskAction -Execute $pyw -Argument ('"' + $script + '"')
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 3650)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+Register-ScheduledTask -TaskName 'WHUT-AutoLogin-Watch' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+Write-Host "[OK] WHUT-AutoLogin-Watch created (every 10 min, battery allowed)"
+
+# ---- 3) wake-from-sleep task ----
+# Event 1 Power-Troubleshooter = resume from S3/hibernate; Event 507 Kernel-Power = exit modern standby
+$escPyw = $pyw.Replace('&','&amp;')
+$escScr = $script.Replace('&','&amp;')
+$xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>WHUT autologin on wake from sleep</Description></RegistrationInfo>
+  <Triggers>
+    <EventTrigger><Enabled>true</Enabled>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and (EventID=1)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>
+    <EventTrigger><Enabled>true</Enabled>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=507)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>$userid</UserId><LogonType>InteractiveToken</LogonType></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>$escPyw</Command><Arguments>"$escScr"</Arguments></Exec>
+  </Actions>
+</Task>
+"@
+Register-ScheduledTask -TaskName 'WHUT-AutoLogin-Wake' -Xml $xml -Force | Out-Null
+Write-Host "[OK] WHUT-AutoLogin-Wake created (resume triggers login)"
+
+# ---- 4) optional: morning wake task ----
+if ($Morning) {
+    $cfgPath = Join-Path $runDir 'config.json'
+    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+    $wake = if ($cfg.wake_time) { $cfg.wake_time } else { '07:00' }
+    $hold = if ($cfg.hold_hours) { [string]$cfg.hold_hours } else { '12' }
+    $startBoundary = '{0:yyyy-MM-dd}T{1}:00' -f (Get-Date), $wake
+    $xmlMorning = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>WHUT autologin: daily wake at $wake, login, hold awake $hold h</Description></RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>$startBoundary</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>$userid</UserId><LogonType>InteractiveToken</LogonType></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <WakeToRun>true</WakeToRun>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>$escPyw</Command><Arguments>"$escScr" --hold $hold</Arguments></Exec>
+  </Actions>
+</Task>
+"@
+    Register-ScheduledTask -TaskName 'WHUT-AutoLogin-Morning' -Xml $xmlMorning -Force | Out-Null
+    Write-Host "[OK] WHUT-AutoLogin-Morning created (daily $wake, WakeToRun, hold ${hold}h)"
+}
+
+# ---- 5) optional: morning report task (ServerChan push to WeChat) ----
+if ($Report) {
+    $reportScript = Join-Path $runDir 'morning_report.py'
+    $cfgPath = Join-Path $runDir 'config.json'
+    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+    $wake = if ($cfg.wake_time) { $cfg.wake_time } else { '07:00' }
+    $hh = [int]($wake.Split(':')[0]); $mm = [int]($wake.Split(':')[1]) + 5
+    if ($mm -ge 60) { $mm -= 60; $hh += 1 }
+    $reportTime = '{0:D2}:{1:D2}' -f $hh, $mm
+    $startBoundary2 = '{0:yyyy-MM-dd}T{1}:00' -f (Get-Date), $reportTime
+    $escRpt = $reportScript.Replace('&','&amp;')
+    $xmlReport = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>WHUT autologin morning report via ServerChan at $reportTime</Description></RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>$startBoundary2</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>$userid</UserId><LogonType>InteractiveToken</LogonType></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <WakeToRun>true</WakeToRun>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>$pyw</Command><Arguments>"$escRpt"</Arguments></Exec>
+  </Actions>
+</Task>
+"@
+    Register-ScheduledTask -TaskName 'WHUT-NetReport-Morning' -Xml $xmlReport -Force | Out-Null
+    Write-Host "[OK] WHUT-NetReport-Morning created (daily $reportTime, ServerChan report)"
+}
+
+# ---- verify ----
+$names = @('WHUT-AutoLogin-Watch','WHUT-AutoLogin-Wake')
+if ($Morning) { $names += 'WHUT-AutoLogin-Morning' }
+if ($Report)  { $names += 'WHUT-NetReport-Morning' }
+foreach ($name in $names) {
+    $t = Get-ScheduledTask -TaskName $name
+    $s = $t.Settings
+    Write-Host ("[CHECK] {0}: state={1} battStart={2} battStop={3}" -f $name, $t.State, $s.DisallowStartIfOnBatteries, $s.StopIfGoingOnBatteries)
+}
+Write-Host "DONE. battStart/battStop must both be False."
+---- END CODE C ----
+
+----------------------------------------------------------------
+六、【代码块E】morning_report.py（可选：微信早报，一字不改）
+----------------------------------------------------------------
+仅当用户选择开通微信早报时写入 <运行目录>\morning_report.py。
+推送内容只含结论与门户响应摘要（不含账号密码/姓名/MAC/token）。
+---- BEGIN CODE E ----
+# -*- coding: utf-8 -*-
+"""WHUT-ISP 每日早报：分析自动登录日志，经 Server酱 推送微信通知。
+
+流程：07:05 由计划任务 WHUT-NetReport-Morning 触发（比 07:00 的登录任务晚 5 分钟），
+读取 whut_autologin.log 中今天 [唤醒时刻-5分钟, +30分钟] 窗口内的记录，判定
+登录结果，调用 Server酱 API 推送到微信。
+
+判定优先级（窗口内）：
+  1. 有"联网验证：成功"        → 成功（掉线后自动登录成功）
+  2. 只有"已在线，无需登录"    → 成功（账号整夜保持在线）
+  3. 有"仍未在线/认证未通过"   → 失败（附门户响应摘要）
+  4. 窗口内无任何日志          → 状态未知（电脑可能没被唤醒，兜底任务会接管）
+
+SendKey 未配置时仅写日志不推送。
+"""
+import json
+import re
+import sys
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta
+from pathlib import Path
+
+RUN_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = RUN_DIR / "config.json"
+LOG_PATH = RUN_DIR / "whut_autologin.log"
+
+
+def log(msg):
+    line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [早报] {msg}"
+    with open(LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def load_window():
+    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    wake = str(cfg.get("wake_time", "07:00"))
+    key = str(cfg.get("serverchan_sendkey", "")).strip()
+    hh, mm = (wake.split(":") + ["0"])[:2]
+    w = datetime.now().replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+    win_start = w - timedelta(minutes=5)
+    win_end = w + timedelta(minutes=30)
+    lines = []
+    if LOG_PATH.exists():
+        for ln in LOG_PATH.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", ln)
+            if not m:
+                continue
+            try:
+                t = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            if t.date() == w.date() and win_start <= t <= win_end:
+                lines.append(ln)
+    return key, wake, lines
+
+
+def judge(lines, wake):
+    """返回 (title, detail)。"""
+    ok_verify = [ln for ln in lines if "联网验证：成功" in ln]
+    ok_online = [ln for ln in lines if "已在线，无需登录" in ln]
+    fail = [ln for ln in lines if ("仍未在线" in ln or "认证未通过" in ln or "登录请求异常" in ln)]
+    portal = [ln for ln in lines if "门户响应" in ln]
+    date = f"{datetime.now():%m-%d}"
+    if ok_verify:
+        return "✅ 校园网自动登录成功", f"{date} 唤醒后掉线，已自动登录恢复。\n" + ok_verify[-1].split("] ", 1)[-1]
+    if ok_online:
+        return "✅ 校园网账号在线", f"{date} 早上账号保持在线，无需登录（未掉线）。"
+    if fail:
+        detail = fail[-1].split("] ", 1)[-1]
+        if portal:
+            detail += "\n" + portal[-1].split("] ", 1)[-1][:150]
+        return "❌ 校园网自动登录失败", f"{date} 自动登录未能恢复联网。\n{detail}\n（兜底任务每10分钟会继续重试；若持续失败请手动登录并检查 config.json 密码）"
+    if lines:
+        return "⚠️ 校园网状态待确认", f"{date} 唤醒窗口内有日志但无明确结论，兜底任务会继续处理。"
+    return "⚠️ 未检测到登录记录", f"{date} {wake} 前后无任何日志——电脑可能没被唤醒或任务未触发。兜底任务每10分钟会尝试登录。"
+
+
+def push(key, title, detail):
+    url = f"https://sctapi.ftqq.com/{key}.send"
+    data = urllib.parse.urlencode({"title": title, "desp": detail}).encode()
+    req = urllib.request.Request(url, data=data, method="POST")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    return body.get("code") == 0
+
+
+def main():
+    key, wake, lines = load_window()
+    title, detail = judge(lines, wake)
+    log(f"判定：{title}（窗口内 {len(lines)} 条日志）")
+    if not key:
+        log("SendKey 未配置，跳过推送。请在 config.json 的 serverchan_sendkey 填入 Server酱 SendKey")
+        return 0
+    try:
+        ok = push(key, title, detail)
+        log("Server酱推送：" + ("成功 ✅" if ok else f"失败：响应异常"))
+    except Exception as e:
+        ok = False
+        log(f"Server酱推送异常：{e}")
+    return 0 if ok else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+---- END CODE E ----
+
+----------------------------------------------------------------
+七、关键坑清单（AI 务必逐条遵守，都是实测踩过的）
+----------------------------------------------------------------
+1. PowerShell 命令一律写成 .ps1 文件再执行，不要在终端里内联敲
+   （bash/终端会把 $ 开头的 PowerShell 变量吃掉导致语法错误）。
+2. .ps1 文件必须纯 ASCII（PowerShell 5.1 把无 BOM 的 UTF-8 当 GBK
+   解析，文件里有中文注释必然解析报错）。
+3. 计划任务必须显式带电池设置：Register-ScheduledTask 不传 Settings
+   时默认 DisallowStartIfOnBatteries=True，笔记本用电池时任务根本
+   不跑。必须 New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries
+   -DontStopIfGoingOnBatteries。
+4. 每日计划任务的 XML 必须用 CalendarTrigger + ScheduleByDay。
+   在 TimeTrigger 里塞 ScheduleByDay 会报"任务 XML 包含意外节点"。
+   节点顺序：StartBoundary 要写在 Enabled 前面。
+5. 无限重复不要用 TimeSpan.MaxValue（生成的 XML 时长非法），用
+   New-TimeSpan -Days 3650。需要不限时运行的任务（Morning 的 hold
+   可能持续 12 小时）把 ExecutionTimeLimit 设为 PT0S。
+6. .cmd/.bat 文件也保持纯 ASCII，不要写 chcp 65001（UTF-8 中文注释
+   会让 cmd 解析错位，出现 "?python 不是内部或外部命令" 这种怪错）。
+7. 认证成功（code=0）不等于联网：PPPoE 数据面建立要 10~20 秒，
+   联网验证必须轮询（脚本已内置 45 秒窗口），不要一次探测定成败。
+8. 残留会话卡拨号（authMsg=已登录成功、dialCode 为空、且始终不在线）
+   → 先 GET /api/account/logout 清会话再重登（脚本已内置该兜底）。
+9. config.json 里 username/password/SendKey 都属用户隐私：AI 全程
+   只校验非空，不读取不打印。
+10. 不要为了让中文不乱码去改主脚本的编码；脚本日志文件是 UTF-8，
+    真控制台里中文由 Python 的 Windows 控制台 API 正常显示。
+11. 本机如果是 Modern Standby（powercfg /a 显示 S0 低电量待机），
+    定时任务 WakeToRun 照常可用；若 Morning 唤醒失败，备选方案是
+    BIOS 里找 "AC Power Recovery / 来电自启" 设为 Power On。
+12. 微信早报推送内容只允许结论行和门户响应摘要（code/认证/拨号/
+    msg 字段），绝不能包含门户原始 JSON（里面有用户姓名/MAC/token）、
+    账号密码。Server酱免费版每天限 5 条，本工具每天只推 1 条。
+
+----------------------------------------------------------------
+八、验证清单（AI 完成部署后逐项自查）
+----------------------------------------------------------------
+[ ] config.json 的 username/password 非空，且 AI 未读取过密码值
+[ ] python whut_autologin.py 手动运行通过（或用户当前在线，已说明下次掉线自动生效）
+[ ] Get-ScheduledTask 显示所装任务 state=Ready，battStart/battStop 均 False
+[ ] 已向用户交代：日志位置、改密码后同步改 config.json、验证码手动处理、卸载方法
+[ ]（若开通微信早报）手动跑 morning_report.py，用户微信能收到消息；
+    或 SendKey 留空未启用，已告知用户如何后续开启
+
+----------------------------------------------------------------
+九、卸载（【代码块D】uninstall_autorun.cmd，双击即可）
+----------------------------------------------------------------
+（会尝试删除全部任务，没装的可选项会报"找不到"属正常）
+---- BEGIN CODE D ----
+@echo off
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v WHUT-AutoLogin /f
+schtasks /Delete /F /TN "WHUT-AutoLogin-Watch"
+schtasks /Delete /F /TN "WHUT-AutoLogin-Wake"
+schtasks /Delete /F /TN "WHUT-AutoLogin-Morning"
+schtasks /Delete /F /TN "WHUT-NetReport-Morning"
+echo All WHUT autologin tasks removed.
+pause
+---- END CODE D ----
+
+----------------------------------------------------------------
+十、安全与隐私说明（可直接转述给用户）
+----------------------------------------------------------------
+- 账号密码只存在本机 config.json，只发送到学校认证网关
+  172.30.21.100（华为 Portal 协议本身要求），登录链路没有任何第三方
+  上报、遥测、云同步。
+- 日志 whut_autologin.log 只记用户名和门户响应摘要，不记密码；
+  超 2MB 自动轮转，不会无限变大。
+- （若开通微信早报）推送经第三方服务 Server酱（sct.ftqq.com）中转，
+  推送内容只有结论和门户摘要，不含任何凭据；SendKey 可随时在
+  Server酱官网重置。登录动作本身依然只直连学校网关。
+- 认证过程走 HTTP 明文是校园网 Portal 的固有特性，不是本工具引入。
+- 脚本协议与开源项目 zhxycn/WHUT-WLAN（github.com/zhxycn/WHUT-WLAN）
+  一致，并做了超时、URL 编码、轮询验证、残留会话清理等加固。
+================================================================
+（文档完）
