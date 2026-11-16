@@ -89,13 +89,18 @@ def main():
     verdict_deadline = w + timedelta(minutes=30)
 
     lines = read_window_lines(win_start, win_end)
-    # 等待判决：登录可能还在等网络，直到出现"联网验证"结论行或超过 +30 分钟
-    if datetime.now() < verdict_deadline and not any("联网验证" in ln for ln in lines):
+
+    def has_conclusion(ls):
+        # "联网验证"（掉线后登录的成败）或"已在线"（整夜保持在线）都算结论
+        return any(("联网验证" in ln or "已在线，无需登录" in ln) for ln in ls)
+
+    # 等待判决：登录可能还在等网络，直到出现结论行或超过 +30 分钟
+    if datetime.now() < verdict_deadline and not has_conclusion(lines):
         log("窗口内暂无登录结论，等待登录任务出结果…")
         while datetime.now() < verdict_deadline:
             time.sleep(20)
             lines = read_window_lines(win_start, win_end)
-            if any("联网验证" in ln for ln in lines):
+            if has_conclusion(lines):
                 break
 
     ok_verify = [ln for ln in lines if "联网验证：成功" in ln]
